@@ -1,126 +1,122 @@
-reID_project
-Overview
-This project aims to train a Re-Identification (ReID) model using the VeRi(Current training completed)  and Market1500 dataset. 
+**reID_project**
+*Overview*
+
+This project aims to train a Re-Identification (ReID) model using the VeRi (Current training completed)  and Market1500 dataset. 
 The model leverages a ResNet50 backbone, and the training process includes advanced techniques such as data augmentation, a combination of loss functions, gradient clipping, and learning rate scheduling.
 
-Directory Structure
-markdown
-Copy code
-reID_project/
-│
-├── configs/
-│   ├── kd_config.yaml
-│   └── moe_config.yaml
-│
-├── data/
-│   ├── Market_1501/
-│   │   ├── bounding_box_train/
-│   │   ├── bounding_box_test/
-│   │   ├── gt_bbox/
-│   │   ├── gt_query/
-│   │   ├── query/
-│   │   └── readme.txt
-│   └── VeRi/
-│       ├── image_query/
-│       ├── image_test/
-│       └── image_train/
-│
-├── experiments/
-│   ├── __init__.py
-│   ├── train.py
-│
-├── models/
-│   ├── __init__.py
-│   ├── foundation_models.py
-│   └── reid_model.py
-│
-├── utils/
-│   ├── __init__.py
-│   ├── metrics.py
-│   └── visualization.py
-│
-├── venv/
-│
-├── config.yaml
-├── main.py
-└── requirements.txt
-Setup
+**Directory Structure**
+
+
+    reID_project/
+    │
+    ├── configs/
+    │   ├── kd_config.yaml
+    │   └── moe_config.yaml
+    │
+    ├── data/
+    │   ├── Market_1501/
+    │   │   ├── bounding_box_train/
+    │   │   ├── bounding_box_test/
+    │   │   ├── gt_bbox/
+    │   │   ├── gt_query/
+    │   │   ├── query/
+    │   │   └── readme.txt
+    │   └── VeRi/
+    │       ├── image_query/
+    │       ├── image_test/
+    │       └── image_train/
+    │
+    ├── experiments/
+    │   ├── __init__.py
+    │   ├── train.py
+    │
+    ├── models/
+    │   ├── __init__.py
+    │   ├── foundation_models.py
+    │   └── reid_model.py
+    │
+    ├── utils/
+    │   ├── __init__.py
+    │   ├── metrics.py
+    │   └── visualization.py
+    │
+    ├── venv/
+    │
+    ├── config.yaml
+    ├── main.py
+    └── requirements.txt
+
+**Setup**
 Install Dependencies
-bash
-Copy code
-pip install -r requirements.txt
-Configuration
+
+    pip install -r requirements.txt
+
+**Configuration**
 Create a config.yaml file with the following content:
 
-yaml
-Copy code
-data_dir: '/Users/tendai/Desktop/reID_project/data/VeRi'
-batch_size: 32
-learning_rate: 0.001
-weight_decay: 0.0001
-num_epochs: 50
-Data Preparation
+    data_dir: '/Users/tendai/Desktop/reID_project/data/VeRi'
+    batch_size: 32
+    learning_rate: 0.001
+    weight_decay: 0.0001
+    num_epochs: 50
+
+**Data Preparation**
 Ensure your data directory is structured as follows:
 
-Copy code
-VeRi/
-├── image_query/
-├── image_test/
-└── image_train/
-Run the Project
+    VeRi/
+    ├── image_query/
+    ├── image_test/
+    └── image_train/
+
+**Run the Project**
 To train the model, run:
 
-bash
-Copy code
-python main.py
-Key Changes and Enhancements
-1. Improved Model Architecture
+
+    python main.py
+
+**Key Changes and Enhancements**
+
+**1. Improved Model Architecture**
 The model now uses a ResNet50 backbone with additional fully connected layers for better feature extraction and classification.
 
-2. Advanced Data Augmentation
+**2. Advanced Data Augmentation**
 Utilized advanced data augmentation techniques to improve the model's robustness:
 
-python
-Copy code
-from torchvision.transforms import autoaugment, transforms
 
-transform_train = transforms.Compose([
-    transforms.RandomResizedCrop(size=256, scale=(0.8, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    autoaugment.RandAugment(),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-3. Combination of Loss Functions
-Implemented a combination of Cross-Entropy Loss and Triplet Loss:
+        from torchvision.transforms import autoaugment, transforms
+        transform_train = transforms.Compose([
+        transforms.RandomResizedCrop(size=256, scale=(0.8, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        autoaugment.RandAugment(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+       ])
 
-python
-Copy code
-from torch.nn import TripletMarginLoss
+**3. Combination of Loss Functions**
 
-criterion_ce = nn.CrossEntropyLoss()
-criterion_triplet = TripletMarginLoss(margin=0.3)
-4. Learning Rate Scheduling
+    Implemented a combination of Cross-Entropy Loss and Triplet Loss:
+        from torch.nn import TripletMarginLoss
+        criterion_ce = nn.CrossEntropyLoss()
+        criterion_triplet = TripletMarginLoss(margin=0.3)
+
+**4. Learning Rate Scheduling**
 Incorporated a learning rate scheduler with warm-up and decay:
 
-python
-Copy code
-from torch.optim.lr_scheduler import OneCycleLR
 
-total_steps = len(train_loader) * config['num_epochs']
-scheduler = OneCycleLR(optimizer, max_lr=1e-3, total_steps=total_steps, pct_start=0.1)
-5. Gradient Clipping
+       from torch.optim.lr_scheduler import OneCycleLR
+    
+       total_steps = len(train_loader) * config['num_epochs']
+       scheduler = OneCycleLR(optimizer, max_lr=1e-3, total_steps=total_steps, pct_start=0.1)
+
+**5. Gradient Clipping**
 Added gradient clipping to prevent gradient explosions:
 
-python
-Copy code
-torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-6. Batch Hard Triplet Mining
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+**6. Batch Hard Triplet Mining**
 Implemented batch hard triplet mining for more effective training:
 
-python
-Copy code
-def batch_hard_triplet_loss(labels, features, margin, squared=False):
+
+    def batch_hard_triplet_loss(labels, features, margin, squared=False):
     pairwise_dist = torch.cdist(features, features, p=2)
     
     mask_anchor_positive = labels.expand(len(labels), len(labels)).eq(labels.expand(len(labels), len(labels)).t())
@@ -137,29 +133,27 @@ def batch_hard_triplet_loss(labels, features, margin, squared=False):
     triplet_loss = triplet_loss.mean()
     
     return triplet_loss
-7. Data Inspection
+**7. Data Inspection**
 Implemented a function to inspect data distribution:
 
-python
-Copy code
-def inspect_data_distribution(root_dir):
-    samples = get_samples_from_dir(root_dir)
-    labels = [label for _, label in samples]
-    unique_labels, counts = np.unique(labels, return_counts=True)
-    plt.figure(figsize=(10, 5))
-    plt.bar(unique_labels, counts)
-    plt.title('Data Distribution')
-    plt.xlabel('Class ID')
-    plt.ylabel('Number of Samples')
-    plt.savefig('data_distribution.png')
-    print("Data distribution plot saved as 'data_distribution.png'")
-8. Logging and Plotting
+
+        def inspect_data_distribution(root_dir):
+        samples = get_samples_from_dir(root_dir)
+        labels = [label for _, label in samples]
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        plt.figure(figsize=(10, 5))
+        plt.bar(unique_labels, counts)
+        plt.title('Data Distribution')
+        plt.xlabel('Class ID')
+        plt.ylabel('Number of Samples')
+        plt.savefig('data_distribution.png')
+        print("Data distribution plot saved as 'data_distribution.png'")
+
+**8. **Logging and Plotting****
 Enhanced logging and added plotting of training history:
 
-python
-Copy code
-def plot_training_history(train_losses, val_losses, train_accs, val_accs):
-    import matplotlib.pyplot as plt
+    def plot_training_history(train_losses, val_losses, train_accs, val_accs):
+        import matplotlib.pyplot as plt
 
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 2, 1)
