@@ -5,6 +5,10 @@ This project aims to train a Re-Identification (ReID) model using the VeRi (Curr
 The model leverages a ResNet50 backbone, and the training process includes advanced techniques such as data augmentation, a combination of loss functions, gradient clipping, and learning rate scheduling.
 
 *Training on a MacBook M2 Pro using device = mps not cuda*
+
+
+
+
 **Directory Structure**
 
 
