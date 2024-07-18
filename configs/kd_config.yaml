@@ -1,0 +1,13 @@
+train_dir: '/Users/tendai/Desktop/reID_project/data/Market_1501/bounding_box_train'
+test_dir: '/Users/tendai/Desktop/reID_project/data/Market_1501/bounding_box_test'
+dataset: 'market1501'  # or 'veri'
+batch_size: 32
+learning_rate: 0.0001
+num_epochs: 50
+num_classes: 751  # for Market-1501, 576 for VeRi
+teacher_model_path: 'path/to/best_moe_model.pth'
+alpha: 0.5
+temperature: 2.0
+device: 'mps'  # for MacBook with Metal Performance Shaders (MPS)
+early_stop_patience: 10
+weight_decay: 0.0001
