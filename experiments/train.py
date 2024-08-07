@@ -1,120 +1,132 @@
+# experiments/train.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import OneCycleLR
 from tqdm import tqdm
 import logging
-import matplotlib.pyplot as plt
+import os
+import numpy as np
+from utils.visualization import plot_training_history
+from utils.metrics import compute_accuracy, compute_mAP, compute_cmc
 
+# Set up logging
 logger = logging.getLogger(__name__)
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device):
-    best_val_acc = 0.0
+def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, save_dir):
+    best_val_map = 0.0
     train_losses, train_accs, val_losses, val_accs = [], [], [], []
 
-    patience = 10
-    patience_counter = 0
-
     for epoch in range(num_epochs):
-        logger.info(f'Epoch {epoch+1}/{num_epochs}')
+        logger.info(f'Epoch {epoch + 1}/{num_epochs}')
         logger.info('-' * 10)
 
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                model.train()
-                dataloader = train_loader
-            else:
-                model.eval()
-                dataloader = val_loader
+        # Training phase
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
 
-            running_loss = 0.0
-            running_corrects = 0
+        # Validation phase
+        val_loss, val_acc, val_map = validate_epoch(model, val_loader, criterion, device)
 
-            for inputs, labels in tqdm(dataloader):
-                inputs = inputs.to(device, dtype=torch.float32)
-                labels = labels.to(device, dtype=torch.long)
+        # Update learning rate
+        if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(val_map)
+        else:
+            scheduler.step()
 
-                optimizer.zero_grad()
+        # Log results
+        logger.info(f'Train Loss: {train_loss:.4f} Acc: {train_acc:.4f}')
+        logger.info(f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} mAP: {val_map:.4f}')
 
-                with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    loss = criterion(outputs, labels)
+        # Save results for plotting
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
 
-                    if phase == 'train':
-                        loss.backward()
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                        optimizer.step()
+        # Save best model
+        if val_map > best_val_map:
+            best_val_map = val_map
+            torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
+            logger.info(f'New best model saved with mAP: {best_val_map:.4f}')
 
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-
-            epoch_loss = running_loss / len(dataloader.dataset)
-            epoch_acc = running_corrects.float() / len(dataloader.dataset)
-
-            logger.info(f'{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
-
-            if phase == 'train':
-                train_losses.append(epoch_loss)
-                train_accs.append(epoch_acc.item())
-            else:
-                val_losses.append(epoch_loss)
-                val_accs.append(epoch_acc.item())
-                scheduler.step(epoch_acc)
-
-                if epoch_acc > best_val_acc:
-                    best_val_acc = epoch_acc
-                    torch.save(model.state_dict(), 'best_model.pth')
-                    logger.info(f'New best model saved with accuracy: {best_val_acc:.4f}')
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-                    if patience_counter >= patience:
-                        logger.info(f"Early stopping triggered after epoch {epoch+1}")
-                        return model
-
-            # Print sample predictions
-            if epoch % 5 == 0:
-                print_sample_predictions(model, train_loader, device, "Training")
-                print_sample_predictions(model, val_loader, device, "Validation")
+        # Print sample predictions every 5 epochs
+        if epoch % 5 == 0:
+            print_sample_predictions(model, train_loader, device, "Training")
+            print_sample_predictions(model, val_loader, device, "Validation")
 
     # Plot training history
-    plot_training_history(train_losses, val_losses, train_accs, val_accs)
+    plot_training_history(train_losses, val_losses, train_accs, val_accs,
+                          save_path=os.path.join(save_dir, 'training_history.png'))
+    logger.info("Training completed.")
+    return model, train_losses, train_accs, val_losses, val_accs
 
-    return model
+def train_epoch(model, dataloader, criterion, optimizer, device):
+    model.train()
+    running_loss = 0.0
+    running_corrects = 0
+
+    for inputs, labels in tqdm(dataloader, desc='Training'):
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        optimizer.zero_grad()
+
+        outputs = model(inputs)
+        _, preds = torch.max(outputs, 1)
+        loss = criterion(outputs, labels)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        running_loss += loss.item() * inputs.size(0)
+        running_corrects += torch.sum(preds == labels.data)
+
+    epoch_loss = running_loss / len(dataloader.dataset)
+    epoch_acc = running_corrects.float() / len(dataloader.dataset)
+
+    return epoch_loss, epoch_acc.item()
+
+def validate_epoch(model, dataloader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    all_labels = []
+    all_outputs = []
+
+    with torch.no_grad():
+        for inputs, labels in tqdm(dataloader, desc='Validating'):
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item() * inputs.size(0)
+            all_labels.extend(labels.cpu())
+            all_outputs.extend(outputs.cpu())
+
+    all_labels = torch.stack(all_labels)
+    all_outputs = torch.stack(all_outputs)
+
+    epoch_loss = running_loss / len(dataloader.dataset)
+    epoch_acc = compute_accuracy(all_outputs, all_labels)
+    epoch_map = compute_mAP(all_outputs.numpy(), all_labels.numpy())
+
+    return epoch_loss, epoch_acc, epoch_map
 
 def print_sample_predictions(model, dataloader, device, phase):
     model.eval()
-    all_preds = []
     with torch.no_grad():
         for inputs, labels in dataloader:
-            inputs = inputs.to(device, dtype=torch.float32)
+            inputs = inputs.to(device)
             outputs = model(inputs)
             _, preds = torch.max(outputs, 1)
-            all_preds.extend(preds.cpu().numpy())
-
             for i in range(min(5, len(inputs))):
                 logger.info(f"{phase} - True: {labels[i].item()}, Predicted: {preds[i].item()}")
+            break
 
-            break  # Only process one batch
+    logger.info(f"{phase} - Unique predicted classes: {set(preds.cpu().numpy())}")
 
-    logger.info(f"{phase} - Unique predicted classes: {set(all_preds)}")
-
-def plot_training_history(train_losses, val_losses, train_accs, val_accs):
-    plt.figure(figsize=(12, 4))
-    plt.subplot(1, 2, 1)
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(val_losses, label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-
-    plt.subplot(1, 2, 2)
-    plt.plot(train_accs, label='Train Accuracy')
-    plt.plot(val_accs, label='Validation Accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.legend()
-
-    plt.tight_layout()
-    plt.savefig('training_history.png')
-    logger.info("Training history plot saved as 'training_history.png'")
+if __name__ == "__main__":
+    # This block allows you to run some tests directly on this script if needed
+    pass
