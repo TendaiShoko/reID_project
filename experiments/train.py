@@ -1,73 +1,51 @@
-# experiments/train.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import OneCycleLR
 from tqdm import tqdm
-import logging
+from torchvision import datasets, models, transforms
+from torch.utils.data import DataLoader
 import os
-import numpy as np
-from utils.visualization import plot_training_history
-from utils.metrics import compute_accuracy, compute_mAP, compute_cmc
 
-# Set up logging
-logger = logging.getLogger(__name__)
+# Define the LabelRemapper class
+class LabelRemapper:
+    def __init__(self, original_labels):
+        unique_labels = sorted(set(original_labels))
+        self.label_map = {label: i for i, label in enumerate(unique_labels)}
+    
+    def remap(self, label):
+        return self.label_map[label]
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, save_dir):
-    best_val_map = 0.0
-    train_losses, train_accs, val_losses, val_accs = [], [], [], []
+# Function to remap dataset labels
+def remap_dataset_labels(dataset):
+    all_labels = [label for _, label in dataset.samples]
+    remapper = LabelRemapper(all_labels)
+    
+    new_samples = [(path, remapper.remap(label)) for path, label in dataset.samples]
+    dataset.samples = new_samples
+    dataset.targets = [label for _, label in new_samples]
+    
+    return len(remapper.label_map)
 
-    for epoch in range(num_epochs):
-        logger.info(f'Epoch {epoch + 1}/{num_epochs}')
-        logger.info('-' * 10)
-
-        # Training phase
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
-
-        # Validation phase
-        val_loss, val_acc, val_map = validate_epoch(model, val_loader, criterion, device)
-
-        # Update learning rate
-        if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-            scheduler.step(val_map)
-        else:
-            scheduler.step()
-
-        # Log results
-        logger.info(f'Train Loss: {train_loss:.4f} Acc: {train_acc:.4f}')
-        logger.info(f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} mAP: {val_map:.4f}')
-
-        # Save results for plotting
-        train_losses.append(train_loss)
-        train_accs.append(train_acc)
-        val_losses.append(val_loss)
-        val_accs.append(val_acc)
-
-        # Save best model
-        if val_map > best_val_map:
-            best_val_map = val_map
-            torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
-            logger.info(f'New best model saved with mAP: {best_val_map:.4f}')
-
-        # Print sample predictions every 5 epochs
-        if epoch % 5 == 0:
-            print_sample_predictions(model, train_loader, device, "Training")
-            print_sample_predictions(model, val_loader, device, "Validation")
-
-    # Plot training history
-    plot_training_history(train_losses, val_losses, train_accs, val_accs,
-                          save_path=os.path.join(save_dir, 'training_history.png'))
-    logger.info("Training completed.")
-    return model, train_losses, train_accs, val_losses, val_accs
-
-def train_epoch(model, dataloader, criterion, optimizer, device):
+# Define the train_epoch function
+def train_epoch(model, dataloader, criterion, optimizer, device, num_classes):
     model.train()
     running_loss = 0.0
     running_corrects = 0
+    total_samples = 0
 
-    for inputs, labels in tqdm(dataloader, desc='Training'):
+    for inputs, labels in tqdm(dataloader, desc='Training', leave=False):
         inputs = inputs.to(device)
         labels = labels.to(device)
+
+        # Debugging: Print out labels to check their range
+        invalid_labels = labels[(labels < 0) | (labels >= num_classes)]
+        if len(invalid_labels) > 0:
+            print(f"Found invalid labels in the batch: {invalid_labels}")
+            # Find corresponding image paths for the invalid labels
+            invalid_indices = torch.nonzero((labels < 0) | (labels >= num_classes), as_tuple=True)[0]
+            invalid_images = [dataloader.dataset.samples[idx][0] for idx in invalid_indices]
+            print(f"Corresponding image paths: {invalid_images}")
+            raise ValueError(f"Labels are out of valid range [0, {num_classes-1}]")
 
         optimizer.zero_grad()
 
@@ -76,57 +54,126 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         loss = criterion(outputs, labels)
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         running_loss += loss.item() * inputs.size(0)
         running_corrects += torch.sum(preds == labels.data)
+        total_samples += inputs.size(0)
 
-    epoch_loss = running_loss / len(dataloader.dataset)
-    epoch_acc = running_corrects.float() / len(dataloader.dataset)
+    epoch_loss = running_loss / total_samples
+    epoch_acc = running_corrects.double() / total_samples
 
-    return epoch_loss, epoch_acc.item()
+    return epoch_loss, epoch_acc
 
-def validate_epoch(model, dataloader, criterion, device):
-    model.eval()
-    running_loss = 0.0
-    all_labels = []
-    all_outputs = []
+# Define the train_model function
+def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, device, num_epochs=50, save_dir=None):
+    best_model_wts = model.state_dict()
+    best_acc = 0.0
 
-    with torch.no_grad():
-        for inputs, labels in tqdm(dataloader, desc='Validating'):
+    train_losses = []
+    train_accs = []
+    val_losses = []
+    val_accs = []
+
+    num_classes = len(set([label for _, label in train_loader.dataset.samples]))
+
+    for epoch in range(num_epochs):
+        print(f'Epoch {epoch+1}/{num_epochs}')
+        print('-' * 10)
+
+        # Train phase
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device, num_classes)
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+
+        # Validation phase
+        model.eval()
+        running_loss = 0.0
+        running_corrects = 0
+        total_samples = 0
+
+        for inputs, labels in tqdm(val_loader, desc='Validation', leave=False):
             inputs = inputs.to(device)
             labels = labels.to(device)
 
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+            with torch.no_grad():
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                loss = criterion(outputs, labels)
 
             running_loss += loss.item() * inputs.size(0)
-            all_labels.extend(labels.cpu())
-            all_outputs.extend(outputs.cpu())
+            running_corrects += torch.sum(preds == labels.data)
+            total_samples += inputs.size(0)
 
-    all_labels = torch.stack(all_labels)
-    all_outputs = torch.stack(all_outputs)
+        val_loss = running_loss / total_samples
+        val_acc = running_corrects.double() / total_samples
 
-    epoch_loss = running_loss / len(dataloader.dataset)
-    epoch_acc = compute_accuracy(all_outputs, all_labels)
-    epoch_map = compute_mAP(all_outputs.numpy(), all_labels.numpy())
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
 
-    return epoch_loss, epoch_acc, epoch_map
+        print(f'Train Loss: {train_loss:.4f} Acc: {train_acc:.4f}')
+        print(f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}')
 
-def print_sample_predictions(model, dataloader, device, phase):
-    model.eval()
-    with torch.no_grad():
-        for inputs, labels in dataloader:
-            inputs = inputs.to(device)
-            outputs = model(inputs)
-            _, preds = torch.max(outputs, 1)
-            for i in range(min(5, len(inputs))):
-                logger.info(f"{phase} - True: {labels[i].item()}, Predicted: {preds[i].item()}")
-            break
+        if val_acc > best_acc:
+            best_acc = val_acc
+            best_model_wts = model.state_dict()
+            if save_dir:
+                checkpoint_path = os.path.join(save_dir, 'best_model.pth')
+                torch.save(best_model_wts, checkpoint_path)
+                print(f'Saved best model checkpoint: {checkpoint_path}')
 
-    logger.info(f"{phase} - Unique predicted classes: {set(preds.cpu().numpy())}")
+        scheduler.step()
 
-if __name__ == "__main__":
-    # This block allows you to run some tests directly on this script if needed
-    pass
+    model.load_state_dict(best_model_wts)
+    return model, train_losses, train_accs, val_losses, val_accs
+
+# Main script to set up data, model, and training
+def main():
+    data_dir = "data"
+    save_dir = "checkpoints"  # Define the directory to save checkpoints
+    os.makedirs(save_dir, exist_ok=True)  # Create the directory if it doesn't exist
+
+    batch_size = 32
+    num_epochs = 50
+    learning_rate = 0.001
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    data_transforms = {
+        'train': transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
+        'val': transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
+    }
+
+    image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
+    
+    # Remap labels and get the number of classes
+    num_classes = remap_dataset_labels(image_datasets['train'])
+    remap_dataset_labels(image_datasets['val'])
+
+    dataloaders = {x: DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=4) for x in ['train', 'val']}
+
+    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, num_classes)
+    model = model.to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+
+    model, train_losses, train_accs, val_losses, val_accs = train_model(
+        model, dataloaders['train'], dataloaders['val'], criterion, optimizer, scheduler, device, num_epochs, save_dir
+    )
+
+if __name__ == '__main__':
+    main()
