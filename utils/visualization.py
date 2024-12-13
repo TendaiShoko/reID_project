@@ -1,45 +1,44 @@
 import matplotlib.pyplot as plt
-import pandas as pd
+import seaborn as sns
+import numpy as np
 from sklearn.manifold import TSNE
 
+def plot_training_history(train_losses, val_losses, train_accs, val_accs, save_path='training_history.png'):
+    plt.figure(figsize=(12, 5))
 
-def plot_embeddings(embeddings, labels, output_path='embeddings_tsne.png'):
-    tsne = TSNE(n_components=2, random_state=42)
-    embeddings_2d = tsne.fit_transform(embeddings)
-
-    plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=labels, cmap='tab20')
-    plt.colorbar(scatter)
-    plt.title('t-SNE visualization of embeddings')
-    plt.savefig(output_path)
-    plt.close()
-
-
-def plot_metrics(metric_values, labels, metric_name, output_path):
-    plt.figure(figsize=(10, 6))
-    for i, values in enumerate(metric_values):
-        plt.plot(values, label=labels[i])
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Validation Loss')
     plt.xlabel('Epoch')
-    plt.ylabel(metric_name)
-    plt.title(f'{metric_name} over Epochs')
+    plt.ylabel('Loss')
     plt.legend()
-    plt.grid(True)
-    plt.savefig(output_path)
-    plt.close()
+    plt.title('Training and Validation Loss')
 
+    plt.subplot(1, 2, 2)
+    plt.plot(train_accs, label='Train Accuracy')
+    plt.plot(val_accs, label='Validation Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.title('Training and Validation Accuracy')
 
-def generate_comparison_table(data, output_path):
-    df = pd.DataFrame(data)
-    print(df)
-    df.to_csv(output_path, index=False)
-    print(f'Table saved to {output_path}')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.show()
 
-# Example usage:
-# plot_metrics([train_accuracies, val_accuracies], ['Train', 'Validation'], 'Accuracy', 'accuracy_over_epochs.png')
-# generate_comparison_table({
-#     'Model': ['MoE', 'KD'],
-#     'Rank-1': [0.85, 0.82],
-#     'Rank-5': [0.92, 0.90],
-#     'Rank-10': [0.94, 0.93],
-#     'mAP': [0.75, 0.73]
-# }, 'comparison_table.csv')
+def plot_embeddings(features, labels, num_classes, save_path='embeddings_tsne.png'):
+    tsne = TSNE(n_components=2, perplexity=30, n_iter=300)
+    tsne_results = tsne.fit_transform(features)
+
+    plt.figure(figsize=(10, 10))
+    palette = sns.color_palette("hsv", num_classes)
+    sns.scatterplot(
+        x=tsne_results[:,0], y=tsne_results[:,1],
+        hue=labels,
+        palette=palette,
+        legend="full",
+        alpha=0.3
+    )
+    plt.title('T-SNE of Features')
+    plt.savefig(save_path)
+    plt.show()

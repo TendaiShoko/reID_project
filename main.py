@@ -5,18 +5,21 @@ from data.datasets import get_reid_dataloaders, inspect_data_distribution
 from data.transforms import get_transform
 from models.reid_model import ReIDModel
 from experiments.train import train_model
+from experiments.evaluate import evaluate_model
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
-def inspect_data_loading(dataloader):
-    for inputs, labels in dataloader:
-        print(f"Inputs shape: {inputs.shape}")
-        print(f"Labels: {labels}")
-        break  # Only inspect the first batch
-
+def analyze_dataset(dataset):
+    from collections import Counter
+    labels = [label for _, label in dataset]
+    class_counts = Counter(labels)
+    print(f"Number of unique classes: {len(class_counts)}")
+    print(f"Total number of images: {len(labels)}")
+    print(f"Class distribution: {class_counts}")
+    print(f"Min class size: {min(class_counts.values())}")
+    print(f"Max class size: {max(class_counts.values())}")
 
 def main():
     # Load configuration
@@ -28,9 +31,10 @@ def main():
     learning_rate = config['learning_rate']
     weight_decay = config['weight_decay']
     num_epochs = config['num_epochs']
+    save_dir = config['save_dir']
 
     # Set device
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
     # Inspect data distribution
@@ -42,9 +46,16 @@ def main():
     logger.info(f"Number of training samples: {len(train_loader.dataset)}")
     logger.info(f"Number of validation samples: {len(val_loader.dataset)}")
 
-    # Inspect data loading
-    inspect_data_loading(train_loader)
-    inspect_data_loading(val_loader)
+    # Convert DataLoader to dataset
+    train_dataset = train_loader.dataset
+    val_dataset = val_loader.dataset
+
+    # Analyze datasets
+    print("Analyzing training dataset...")
+    analyze_dataset(train_dataset)
+    
+    print("Analyzing validation dataset...")
+    analyze_dataset(val_dataset)
 
     # Initialize model
     num_classes = len(set([label for _, label in train_loader.dataset.dataset.samples]))
@@ -57,10 +68,16 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5, verbose=True)
 
     # Train the model
-    trained_model = train_model(model, train_loader, val_loader, criterion, optimizer, scheduler,
-                                num_epochs=num_epochs, device=device)
+    trained_model, train_losses, train_accs, val_losses, val_accs = train_model(
+        model, train_loader, val_loader, criterion, optimizer, scheduler,
+        num_epochs=num_epochs, device=device, save_dir=save_dir
+    )
 
     logger.info("Training completed.")
+
+    # Evaluate the model
+    logger.info("Evaluating model on validation set...")
+    evaluate_model(model, val_loader, device, save_dir)
 
 
 if __name__ == "__main__":

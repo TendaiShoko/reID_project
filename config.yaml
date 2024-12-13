@@ -1,5 +1,6 @@
-data_dir: '/Users/tendai/Desktop/reID_project/data/VeRi'
+data_dir: '/content/reID_project/data/VeRi'
 batch_size: 32
 learning_rate: 0.001
 weight_decay: 0.0001
 num_epochs: 50
+save_dir: '/content/reID_project/saved_models'
